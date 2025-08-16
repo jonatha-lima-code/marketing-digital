@@ -1,0 +1,54 @@
+
+- hosts: localhost
+  connection: local
+  gather_facts: no
+  vars:
+    redshift_endpoint: "{{ lookup('env','REDSHIFT_ENDPOINT') }}"
+    redshift_db: dev
+    redshift_user: "{{ lookup('env','REDSHIFT_USER') | default('adminuser') }}"
+    redshift_password: "{{ lookup('env','REDSHIFT_PASSWORD') | default('ChangeMe123!') }}"
+  tasks:
+    - name: Wait for Redshift endpoint to be available (simple TCP wait)
+      wait_for:
+        host: "{{ redshift_endpoint }}"
+        port: 5439
+        timeout: 300
+
+    - name: Create raw_events table in Redshift
+      community.postgresql.postgresql_query:
+        db: "{{ redshift_db }}"
+        login_user: "{{ redshift_user }}"
+        login_password: "{{ redshift_password }}"
+        login_host: "{{ redshift_endpoint }}"
+        query: |
+          CREATE TABLE IF NOT EXISTS raw_events (
+            source VARCHAR(50),
+            date DATE,
+            campaign_id VARCHAR(50),
+            spend FLOAT,
+            clicks INT,
+            impressions INT,
+            conversions INT,
+            revenue FLOAT
+          );
+
+    - name: Create view vw_daily_kpis
+      community.postgresql.postgresql_query:
+        db: "{{ redshift_db }}"
+        login_user: "{{ redshift_user }}"
+        login_password: "{{ redshift_password }}"
+        login_host: "{{ redshift_endpoint }}"
+        query: |
+          CREATE OR REPLACE VIEW vw_daily_kpis AS
+          SELECT
+            date,
+            campaign_id,
+            SUM(spend) AS spend,
+            SUM(clicks) AS clicks,
+            SUM(impressions) AS impressions,
+            SUM(conversions) AS conversions,
+            SUM(revenue) AS revenue,
+            SUM(spend) / NULLIF(SUM(conversions),0) AS cpa,
+            SUM(revenue) / NULLIF(SUM(spend),0) AS roas
+          FROM raw_events
+          GROUP BY date, campaign_id;
